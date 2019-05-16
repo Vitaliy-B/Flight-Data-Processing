@@ -1,0 +1,194 @@
+//---------------------------------------------------------------------------
+#ifndef Main_Form_UnitH
+#define Main_Form_UnitH
+//---------------------------------------------------------------------------
+#include <System.Classes.hpp>
+#include <Vcl.Controls.hpp>
+#include <Vcl.StdCtrls.hpp>
+#include <Vcl.Forms.hpp>
+#include <Vcl.ExtCtrls.hpp>
+#include <Vcl.ComCtrls.hpp>
+#include <Vcl.Grids.hpp>
+#include <Vcl.Dialogs.hpp>
+#include <VCLTee.Chart.hpp>
+#include <VCLTee.Series.hpp>
+#include <VCLTee.TeEngine.hpp>
+#include <VCLTee.TeeProcs.hpp>
+#include <Vcl.CheckLst.hpp>
+#include <Vcl.Buttons.hpp>
+//#include "cspin.h"
+#include <Vcl.XPMan.hpp>
+
+#include "About_form.h"
+#include "frxDock.hpp"
+#include <Vcl.Ribbon.hpp>
+#include <Vcl.RibbonLunaStyleActnCtrls.hpp>
+
+#include <ctime>
+
+//---------------------------------------------------------------------------
+class TMainGUI : public TForm {
+__published:	// IDE-managed Components
+	TOpenDialog *openDialog;
+	TPanel *Panel_top;
+	TPanel *fcPanel;
+	TSpeedButton *fcButton;
+	TPanel *cPanel;
+	TSpeedButton *cButton;
+	TBitBtn *info_btn;
+	TPageControl *Pages;
+	TTabSheet *TabSheet1;
+	TMemo *atrMemo;
+	TTabSheet *TabSheet2;
+	TSplitter *Splitter_pc;
+	TStringGrid *paramGrid;
+	TMemo *paramMemo;
+	TTabSheet *TabSheet3;
+	TSplitter *Splitter_ap;
+	TStringGrid *anlgGrid;
+	TMemo *anlgMemo;
+	TTabSheet *TabSheet4;
+	TSplitter *Splitter_sc;
+	TMemo *snglMemo;
+	TStringGrid *snglGrid;
+	TTabSheet *TabSheet5;
+	TPanel *Panel_graph_root;
+	TSplitter *Splitter_graph;
+	TPanel *Panel_graph_ap;
+	TSplitter *Splitter_graph_ap;
+	TCheckListBox *checkListChannel;
+	TPanel *Panel_chart;
+	TChart *Chart_ap;
+	TButton *add_random_channel;
+	TButton *uncheck_all_channels;
+	TBitBtn *change_color_btn;
+	TPanel *Panel_graph_ap_scale;
+	TGroupBox *channel_scale_n_offset;
+	TLabel *Label_scale;
+	TLabel *Label_offset;
+	TComboBox *ChannelBox_ap;
+	TEdit *offset_edit;
+	TBitBtn *Reset_btn;
+	TBitBtn *scale_btn;
+	TEdit *scale_edit;
+	TBitBtn *btn_add_cur;
+	TBitBtn *auto_scale_all_btn;
+	TBitBtn *reset_all_btn;
+	TPanel *Panel_graph_sc;
+	TCheckListBox *CheckListBox_sc;
+	TPanel *Panel_graph_sc_chart;
+	TChart *Chart_sc;
+	TPanel *Panel_graph_sc_ctrl;
+	TLabel *output_label;
+	TButton *btn_sc_unchk_all;
+	TButton *btn_sc_add_rnd;
+	TBitBtn *btn_sc_chg_color;
+	TBitBtn *btn_sc_zoom_in;
+	TBitBtn *btn_sc_zoom_out;
+	TBitBtn *btn_sc_zoom_reset;
+	TSplitter *Splitter_graph_sc;
+	TBitBtn *btn_multiple_axis;
+	TBitBtn *zoom_in_btn;
+	TBitBtn *zoom_out_btn;
+	TBitBtn *zoom_reset_btn;
+	TLabel *label_zoom;
+	TSplitter *splitter_zoom_start;
+	TSplitter *splitter_zoom_end;
+	TBitBtn *btn_both_side_axis;
+	void __fastcall FormCreate(TObject *Sender);
+	void __fastcall FormDestroy(TObject *Sender);
+	void __fastcall FormResize(TObject *Sender);
+	void __fastcall openButtonClick(TObject *Sender);
+	void __fastcall checkListChannelClickCheck(TObject *Sender);
+	void __fastcall scale_editKeyPress(TObject *Sender, System::WideChar &Key);
+	void __fastcall offset_editKeyPress(TObject *Sender, System::WideChar &Key);
+	void __fastcall uncheck_all_channelsClick(TObject *Sender);
+	void __fastcall add_random_channelClick(TObject *Sender);
+	void __fastcall checkListChannelClick(TObject *Sender);
+	void __fastcall ChannelBox_apChange(TObject *Sender);
+	void __fastcall scale_btnClick(TObject *Sender);
+	void __fastcall Reset_btnClick(TObject *Sender);
+	void __fastcall reset_all_btnClick(TObject *Sender);
+	void __fastcall change_color_btnClick(TObject *Sender);
+	void __fastcall zoom_in_btnClick(TObject *Sender);
+	void __fastcall zoom_out_btnClick(TObject *Sender);
+	void __fastcall zoom_reset_btnClick(TObject *Sender);
+	void __fastcall info_btnClick(TObject *Sender);
+
+	void __fastcall CheckListBox_sc_ClickCheck(TObject *Sender);
+	void __fastcall CheckListBox_sc_Click(TObject *Sender);
+	void __fastcall btn_sc_unchk_all_Click(TObject *Sender);
+	void __fastcall btn_sc_add_rnd_Click(TObject *Sender);
+	void __fastcall btn_sc_chg_color_Click(TObject *Sender);
+	void __fastcall btn_sc_zoom_in_Click(TObject *Sender);
+	void __fastcall btn_sc_zoom_out_Click(TObject *Sender);
+	void __fastcall btn_sc_zoom_reset_Click(TObject *Sender);
+	void __fastcall btn_add_cur_click(TObject *Sender);
+	void __fastcall Splitter_graph_apMoved(TObject *Sender);
+	void __fastcall Splitter_graph_scMoved(TObject *Sender);
+	void __fastcall Chart_apZoom(TObject *Sender);
+	void __fastcall Chart_apUndoZoom(TObject *Sender);
+	void __fastcall FormPaint(TObject *Sender);
+
+	void __fastcall btn_multiple_axisClick(TObject *Sender);
+	void __fastcall auto_scale_all_btnClick(TObject *Sender);
+	void __fastcall btn_both_side_axisClick(TObject *Sender);
+
+private:	// User declarations
+	__fastcall TMainGUI(TComponent* Owner);
+
+	void start_init();
+	bool __fastcall data_loaded();
+	void __fastcall loadAndPrintAll();
+	void __fastcall clearGrid(TStringGrid* grid);
+	void __fastcall clearAll();
+	void __fastcall defaultFill();
+	bool __fastcall TMainGUI::check_chart_series(TChart* chart,
+		const UnicodeString& not_added_msg);
+
+	// нормализует заголовок панели файлов
+	void normalize_caption();
+	// укорачивает длину пути к файлу
+	UnicodeString normalize_path_length(UnicodeString text, const int font_size,
+	const int space_width);
+	UnicodeString normalize_series_title(UnicodeString str);
+
+	void change_check_list_channel_item(const int index);
+	void auto_scale_set_off();
+	void auto_scale_set_on();
+	void auto_scale_all();
+	void multiple_axis_set_off();
+	void multiple_axis_set_on();
+	void enable_scale_offset(bool enable);
+
+	void add_ap_series(const int index);  // use it to add series
+	void draw_ap_series(const int index); // don't use it directly
+	void delete_chart_series(TChartSeries* series);
+	void free_ap_series(const int index);
+	void delete_ap_series(const int index);
+	void free_all_ap_series();
+	void redraw_ap_series(const int index);
+	void redraw_all_ap_series();
+	void zoom_chart_ap_ma(int percent);
+	void zoom_chart_ap_ma_y(int percent);
+	void zoom_chart_axis(TChartAxis* axis, int percent);
+	void scale_chart_ap_sa();
+	void scale_chart_ap_ma();
+	void scale_chart_axis(TChart* chart, TChartAxis* axis);
+
+	void add_sc(const int index);
+	void draw_sc(const int index);
+	void delete_sc(const int index);
+	void free_sc(const int index);
+	void redraw_sc(const int index);
+	void redraw_all_sc();
+	void scale_chart_sc();
+
+public:		// User declarations
+
+};
+
+//---------------------------------------------------------------------------
+extern PACKAGE TMainGUI *MainGUI;
+//---------------------------------------------------------------------------
+#endif

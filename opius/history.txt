@@ -1,0 +1,99 @@
+Graphics (chart with series) improvements, GUI changes and other.
+
+Graphics changes:
+Scaling - in progress...
+Added Color_generator class, which can generate random color, analyse it's brightness, and generate more comfortable color for series on chart.
+Custom generated color are giving to each added series.
+Added Analog_parameter structure, which contains analog parameter data, info and settings.
+3 random series are adding to chart at every program launch.
+
+GUI changes:
+Added 'Uncheck all' button, which deletes all series.
+Added 'Add random' button, which adds random series to chart.
+Improved titles of grids.
+Improved memos sizes;
+Constraints for checkListChannel are dynamically calculating.
+Chart's bottom panel are dynamically resizing.
+OpenFile panel's captions now contain short path to file (that fits to window width).
+Functions for showing messages can recieve UnicodeString as well as standard string.
+Root directory for open file dialog changed to current (default) program folder.
+
+Other changes:
+Corrected Int to String convertion, conversions between standard and unicode strings.
+Randomizer starts at program's launch.
+checkListChannelClickCheck function refactored and optimized.
+Corrected some gramatic errors in texts.
+
+DON'T DO THIS:
+Don't make program remember last added series to chart at it's start!
+Auto Scale must always ON at start!
+Don't store path to file in panel caption.
+===============================================================================
+
+============================2013.08.28=========================================
+GUI changes, bug fixes:
+Fixed bug with OpenFile panel's caption (missed last letter).
+Changed colors of some components.
+
+DON'T DO THIS:
+Don't make program remember last added series to chart at it's start!
+Auto Scale must always ON at start!
+Don't store path to file in panel caption.
+===============================================================================
+
+============================2013.09.08=========================================
+Graphics improvements:
+Implemented scaling using scale and offset edit values.
+Implemented Reset and Reset all buttons.
+Implemented Change color for series.
+Added label to output messages.
+===============================================================================
+
+============================2013.09.11=========================================
+Auto scaling and other changes.
+
+Graphics:
+Implemented auto scaling.
+
+GUI:
+Clarified symbol width in OpenFile panel's caption text.
+Buttons like 'scale', 'reset', and 'reset all' now disabling auto scaling.
+
+Bugs:
+Fixed bug with OpenFile panel's caption [AGAIN] (missed another one last letter).
+===============================================================================
+
+===============================================================================
+About window, icons and chart improvements:
+
+Added 'zoom in', 'zoom out' and 'zoom reset' buttons.
+Added zoom animation.
+Added hint to chart.
+Added custom bitmaps to buttons.
+Added icon to project and main window.
+Added about window with information about program and program picture. 
+===============================================================================
+
+============================2015.08.26  v.1.1==================================
+Renamed ini file, improved path in caption, some improvements
+Added formatting scale and offset values before showing in edits.
+Fixed problem with chart after scroll using mouse (panning -> mouse wheel), and after zooming with no series.
+Improved single commands output.
+
+Changed Graphics tab:
+Moved AP buttons.
+Added Add current button for AP, improved CheckBox and CheckListBox interaction.
+Added single Single commands chart, checklistbox, and few buttons.
+Charts AP and SC separated by splitter with autosnap and checks of constraints.
+Splitters for AP and SC checklistboxes equalized.
+===============================================================================
+
+============================2015.09.19  v.1.2==================================
+Added support of multiple axes, switching between single and multiple axes.
+Ability to locate axis on left only, or both left and right by turns.
+Srolling charts now is performed using left mouse button, zoom using right.
+Series name in legend shown using series color, legend is transparent.
+
+
+
+

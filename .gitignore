@@ -1,0 +1,5 @@
+run git bash.cmd
+*.zip
+*.rar
+*.7z
+bak

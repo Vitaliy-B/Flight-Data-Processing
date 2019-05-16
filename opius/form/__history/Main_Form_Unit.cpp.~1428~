@@ -1,0 +1,1185 @@
+#pragma link "frxDock"
+#pragma link "cspin"
+#include <vcl.h>
+#pragma hdrstop
+
+#include <IniFiles.hpp>
+
+#include <algorithm>
+
+#include "Main_Form_Unit.h"
+#include "../lib/flightDataProcessingForm.h"
+
+using namespace std;
+
+#pragma package(smart_init)
+#pragma resource "*.dfm"
+
+const int rand_ap_at_start = 3;
+const int rand_sc_at_start = 3;
+const int default_tab = 0;
+const int preferred_tab = 4;
+const int axis_offset = 5;
+const int sc_offset = 1;
+const int series_id_length = 5;
+
+TMainGUI *MainGUI;
+
+struct od_cop    OD;    // onozNavatelNue daNNue
+struct atr_pol   APOL;  // atpibytu noleta
+struct AP      **p_AP;  // aNalogovui napametp
+struct RK      **p_RK;  // pazovaja komaNda
+
+vector<Analog_parameter> anlg_param_vec;
+std::vector<Single_command> sngl_cmd_vec;
+std::map<UnicodeString, unsigned int> sngl_cmd_index_map;
+
+String fc_path;  // store path to file there, not in caption!!
+String c_path;
+const String curDir = GetCurrentDir() + "\\";
+//const String iniFile = curDir + "OpiusForm.ini"; // old name
+const String iniFile = curDir + "FDP.ini";
+bool isCorrect = false; // нельзя удалять память, если она не выделена
+bool checkList_ap_changed = false;
+bool checkList_sc_changed = false;
+
+// Form
+__fastcall TMainGUI::TMainGUI(TComponent* Owner) : TForm(Owner) {}
+
+void TMainGUI::start_init()
+{
+	srand(static_cast<unsigned int> (time(0)));
+	Chart_ap->AnimatedZoom = true;
+	Chart_ap->Legend->CheckBoxes = true;
+	Chart_ap->LeftAxis->Automatic = false;
+
+	Chart_sc->AnimatedZoom = true;
+	Chart_sc->Legend->CheckBoxes = true;
+	Chart_sc->LeftAxis->Automatic = false;
+	Chart_sc->BottomAxis->Automatic = false;
+	Chart_sc->LeftAxis->Grid->Visible = false;
+
+	// to prevent bug: after panel was minimized (snapped by splitter),
+	// it can't be restored if window was resized
+	Panel_graph_sc->Constraints->MinHeight = 1;
+
+	auto_scale_set_off();
+	multiple_axis_set_on();
+}
+
+bool __fastcall TMainGUI::data_loaded() {
+	if(! isCorrect) {
+		output_label->Caption = " Data not loaded! ";
+		return false;
+	}
+	return true;
+}
+
+void __fastcall TMainGUI::FormCreate(TObject *Sender) {
+	start_init();
+	TIniFile *ini = new TIniFile(iniFile);
+	try {
+		fc_path = ini->ReadString("FileName", "file-copy", curDir + "data\\C_wzl");
+		fcPanel->Caption = fc_path;
+		c_path = ini->ReadString("FileName", "cyclogram", curDir + "data\\CB_4z");
+		cPanel->Caption = c_path;
+	} __finally {
+		ini->Free();
+		loadAndPrintAll();
+	}
+}
+
+void __fastcall TMainGUI::FormDestroy(TObject *Sender) {
+	if( data_loaded() ) // если выбраные файлы не открылись, не нужно их сохранять в .ini
+	{
+		TIniFile *ini = new TIniFile(iniFile);
+		try {
+			ini->WriteString( "FileName", "file-copy", fc_path );
+			ini->WriteString( "FileName", "cyclogram", c_path );
+		} __finally {
+			ini->Free();
+			clearAll();
+		}
+	}
+}
+
+void __fastcall TMainGUI::FormPaint(TObject *Sender)
+{
+	//zoom_reset_btnClick(0); // to correct scale
+}
+
+void __fastcall TMainGUI::FormResize(TObject *Sender) {
+	fcPanel->Width = Panel_top->Width / 2;
+
+	// checkListChannel constraints
+	int min_chart_space = MainGUI->Constraints->MinWidth
+						- checkListChannel->Constraints->MinWidth;
+	checkListChannel->Constraints->MaxWidth = MainGUI->Width - min_chart_space;
+	CheckListBox_sc->Constraints->MaxWidth = MainGUI->Width - min_chart_space;
+
+	// panels graph AP, SC, splitter
+	const int tab_title_height = 32; // maybe not actual, approximate
+	int pgsc_max_h = Pages->Height - Splitter_graph->MinSize - tab_title_height;
+	if(Panel_graph_sc->Height > pgsc_max_h) {
+		Panel_graph_sc->Height = pgsc_max_h;
+	}
+
+	Splitter_graph_apMoved(0); // to equalize splitters
+
+	normalize_caption();
+}
+
+void TMainGUI::normalize_caption()
+{
+	// panels
+	// укорочение длины пути к файлу
+//	int width = fcPanel->Font->Size; // ширина символа (8)
+	const int width = 6;
+
+	fcPanel->Caption = fc_path;
+	fcPanel->Caption = normalize_path_length(fcPanel->Caption, width,
+		(fcPanel->Width - fcButton->Width) );
+
+	cPanel->Caption = c_path;
+	cPanel->Caption = normalize_path_length(cPanel->Caption, width,
+		(cPanel->Width - cButton->Width) );
+}
+
+UnicodeString TMainGUI::normalize_path_length(UnicodeString text,
+	const int font_size, const int space_width)
+{
+	const int min_str_front = 8;
+	const int min_str_back = 5;
+	const int max_str_sz = 20;
+	const int min_path_parts = 4; // при котором сохраняется корневая папка
+
+	bool contin = true;
+	while ( ((static_cast<double>(text.Length()) * font_size) >= space_width)
+				&& contin )
+	{
+	// can be improved - do not parse/build strings in cycle - only once
+		vector<UnicodeString> path;
+		UnicodeString cur_dir;
+		int cur_beg = 1;
+		int cur_end = 1;
+		while(cur_end <= text.Length()) // разбивка пути на папки (части)
+		{
+			if(text[cur_end] == WideChar('\\') || text[cur_end] == WideChar('/'))
+			{
+				path.push_back(text.SubString(cur_beg,cur_end-cur_beg));
+				cur_beg = cur_end + 1;
+			}
+        cur_end++;
+		}
+		if(cur_beg<= text.Length()) // осталась последняя часть
+		{ path.push_back(text.SubString(cur_beg,text.Length()-cur_beg + 1));}
+
+		bool improved = false;
+		for (unsigned int i=0; i<path.size(); i++)  // сокращение длиных папок
+		{
+			if(path[i].Length() > max_str_sz)
+			{
+				path[i] = path[i].SubString(0,min_str_front) + "..."
+				+ path[i].SubString(path[i].Length()-min_str_back+1,min_str_back);
+				improved = true;
+			}
+			if(improved)
+			{ break;}
+		}
+		if(!improved)             // удаление лишних папок
+		{
+			if(path.size() > min_path_parts)
+			{
+				if( path[1] != "...")
+				{ path[1] = "...";}
+				else
+				{ path.erase(path.begin()+2);}
+
+				improved = true;
+			}
+			else if(path.size() > 2)
+			{
+				if( path[0] != "...")
+				{ path[0] = "...";}
+				else
+				{ path.erase(path.begin()+1);}
+
+				improved = true;
+			}
+			else if(path.size() > 1)
+			{
+				path.erase(path.begin());
+				improved = true;
+			}
+			else
+			{contin = false;}
+        }
+
+		text = "";
+		for(unsigned int i=0; i < path.size()-1; i++) // except last part
+		{
+			text+= UnicodeString(path[i]);
+			text+= UnicodeString("\\");
+		}
+		text+= UnicodeString(path.back()); // last part, without '\\'
+	} // end of improvement
+	return text;
+}
+
+UnicodeString TMainGUI::normalize_series_title(UnicodeString str) {
+	int dif = series_id_length - str.Length();
+	if(dif > 0) {
+		std::string add_str(dif, ' ');
+		str.Insert(UnicodeString(add_str.c_str()), str.Length()+1);
+	} else if(dif < 0) {
+		str.SetLength(series_id_length);
+	}
+	return str;
+}
+
+void __fastcall TMainGUI::clearGrid(TStringGrid* grid) {
+	for( int i = 0; i < grid->RowCount; i++ )
+		grid->Rows[i]->Clear();
+	grid->RowCount = 0;
+	grid->ColCount = 0;
+}
+
+void __fastcall TMainGUI::clearAll() {
+	if( data_loaded() )
+		clean_up();
+	isCorrect = false;
+
+	atrMemo->Lines->Clear();
+	paramMemo->Lines->Clear();
+	clearGrid(paramGrid);
+	anlgMemo->Lines->Clear();
+	clearGrid(anlgGrid);
+	snglMemo->Lines->Clear();
+	clearGrid(snglGrid);
+	checkListChannel->Clear();
+	CheckListBox_sc->Clear();
+	ChannelBox_ap->Clear();
+	while( Chart_ap->SeriesCount() )
+		Chart_ap->Series[0]->Free();
+
+	Chart_sc->FreeAllSeries();
+
+	output_label->Caption = "Data cleared";
+}
+
+void __fastcall TMainGUI::defaultFill() {
+	clearAll();
+
+	atrMemo->Lines->Add("Choose files to open using 'Open..' buttons");
+	atrMemo->Lines->Add("and press 'Processing' button to launch Flight Data Processing.");
+	atrMemo->Lines->Add("");
+	atrMemo->Lines->Add("Выберите файлы для открытия с помощью кнопок 'Open..'");
+	atrMemo->Lines->Add("и нажмите кнопку 'Processing' для запуска Обработки Полетной Информации.");
+	atrMemo->Lines->Add("");
+	atrMemo->Lines->Add("Вкладка 'Flight Data' (Полетная Информация) содержит:");
+	atrMemo->Lines->Add("File-copy attributes - Атрибуты файла-копии;");
+	atrMemo->Lines->Add("Flight identification data - Опознавательные данные;");
+	atrMemo->Lines->Add("Flight attributes - Атрибуты полета;");
+
+	paramMemo->Lines->Add("Коды параметров.");
+	paramMemo->Lines->Add("Печать кодов параметров кадра файла копии.");
+
+	anlgMemo->Lines->Add("Аналоговые Параметры.");
+	anlgMemo->Lines->Add("Вывод физических значений аналоговых параметров.");
+
+	snglMemo->Lines->Add("Разовые Команды.");
+	snglMemo->Lines->Add("Вывод значений разовых команд.");
+
+	output_label->Caption = " Графики АП и РК";
+}
+
+// Load and print all data
+void __fastcall TMainGUI::loadAndPrintAll() {
+	normalize_caption();
+	if( !checkFileName(fc_path, 0) ||
+		!checkFileName(c_path, 1) )
+	{
+		// output_label->Caption = "Data not loaded "; // will be overwritten
+		defaultFill();
+		Pages->TabIndex = default_tab;
+		return;
+	}
+
+	clearAll();
+	if( data_load(fc_path, c_path) == FL_OK ) {
+		Pages->TabIndex = default_tab; // to speed up refreshing during loading
+		PrintAtrFK( atrMemo->Lines, true );
+		PrintOD( atrMemo->Lines, false ); // nechat onozNavatelNux daNNux
+		PrintAtrFlight( atrMemo->Lines, false ); // nechat atpibutov noleta
+		PrintParam( paramGrid, paramMemo->Lines ); // nechat koda napametpov (kadp byp)
+		// AP
+		Output_anlg_param(anlgMemo->Lines, anlgGrid, checkListChannel->Items,
+			ChannelBox_ap->Items);
+
+		// SC
+		Output_sngl_cmd(snglMemo->Lines, snglGrid);
+		sngl_cmd_index_map.clear();
+		std::sort(sngl_cmd_vec.begin(), sngl_cmd_vec.end());
+		for(unsigned int sc_i = 0; sc_i < sngl_cmd_vec.size(); sc_i++) {
+			Single_command& sc = sngl_cmd_vec[sc_i];
+			sngl_cmd_index_map.insert(std::pair<UnicodeString, unsigned int> (
+				UnicodeString(sc.id.c_str()), sc_i));
+			String sc_str =
+				"[" + IntToStr(sc.channel) + "." + IntToStr(sc.number) + "] "
+				+ String(sc.id.c_str()) + " (" + String(sc.name.c_str()) + ")";
+			switch(sc.state) {
+				case Single_command::State::null :
+					CheckListBox_sc->Items->Add("<NULL> " + sc_str);
+					//CheckListBox_sc->State[sc_i] = cbGrayed;
+					CheckListBox_sc->ItemEnabled[sc_i] = false;
+					break;
+				case Single_command::State::constant :
+					CheckListBox_sc->Items->Add("{CONST} " + sc_str);
+					break;
+				case Single_command::State::variable :
+					CheckListBox_sc->Items->Add(sc_str);
+					break;
+				default:
+                    CheckListBox_sc->Items->Add("[UNKNOWN] " + sc_str);
+					break;
+			}
+		}
+		isCorrect = true;
+
+		for(int i=0; i<rand_ap_at_start; i++)
+		{ add_random_channelClick(0);}
+		for(int i=0; i<rand_sc_at_start; i++)
+		{ btn_sc_add_rnd_Click(0);}
+
+		output_label->Caption = "Data loaded ";
+		Pages->TabIndex = preferred_tab;
+		return;
+	}
+	else
+	{
+//		output_label->Caption = "Data not loaded "; // will be overwritten
+		defaultFill();
+		Pages->TabIndex = default_tab;
+	}
+}
+
+// Open Buttons
+void __fastcall TMainGUI::openButtonClick(TObject *Sender) {
+	TButton* button = static_cast<TButton*>(Sender);
+
+    openDialog->InitialDir = curDir;
+	if( openDialog->Execute() )
+	{
+		if(	checkFileName(openDialog->FileName, button->Tag) )
+			if( button->Tag )
+			{
+				c_path = openDialog->FileName;
+				cPanel->Caption = c_path;
+            }
+			else
+			{
+				fc_path = openDialog->FileName;
+				fcPanel->Caption = fc_path;
+            }
+
+		loadAndPrintAll();
+	}
+	else
+	{ output_label->Caption = " Files not selected ";}
+}
+
+void __fastcall TMainGUI::info_btnClick(TObject *Sender) {
+	about_inf_form->ShowModal();
+}
+
+bool __fastcall TMainGUI::check_chart_series(TChart* chart,
+	const UnicodeString& not_added_msg) {
+
+	if(! chart->SeriesCount()) {
+		output_label->Caption = not_added_msg;
+		return false;
+	}
+	return true;
+}
+
+// -------------- SC chart-----------------------------
+
+// draw sc, scale
+void TMainGUI::add_sc(const int index)
+{
+	draw_sc(index);
+	scale_chart_sc();
+}
+
+// just draw sc
+void TMainGUI::draw_sc(const int index)
+{
+	CheckListBox_sc->Checked[index] = true;
+	TChartSeries *newSeries = new TPointSeries(Chart_sc);
+	newSeries->Name = UnicodeString(sngl_cmd_vec[index].id.c_str());
+	newSeries->Title = normalize_series_title(UnicodeString(
+							sngl_cmd_vec[index].id.c_str()));
+
+	for (unsigned int frame=0; frame<sngl_cmd_vec[index].values.size(); frame++)
+	{
+		if(sngl_cmd_vec[index].values[frame]) {
+			newSeries->AddXY(frame, Chart_sc->SeriesCount() * sc_offset);
+		}
+	}
+	newSeries->Color = sngl_cmd_vec[index].color;
+	Chart_sc->AddSeries(newSeries);
+}
+
+// just free sc
+void TMainGUI::free_sc(const int index)
+{
+	UnicodeString id = sngl_cmd_vec[index].id.c_str();
+	for( int i = 0; i < Chart_sc->SeriesCount(); i++ )
+	{
+		if( !CompareStr(Chart_sc->Series[i]->Name, id) )
+		{
+			Chart_sc->Series[i]->Free();
+			break;
+		}
+	}
+}
+
+// free sc, refresh
+void TMainGUI::delete_sc(const int index)
+{
+	free_sc(index);
+    redraw_all_sc();
+}
+
+void TMainGUI::redraw_sc(const int index) { // incapsulate
+	redraw_all_sc(); // need to redraw all..
+}
+
+void TMainGUI::redraw_all_sc()
+{
+	std::vector<int> ids;
+	// remember and del all
+	while(Chart_sc->SeriesCount()) {
+		ids.push_back(sngl_cmd_index_map[Chart_sc->Series[0]->Name]);
+		Chart_sc->Series[0]->Free();
+	} // before adding need to del all, to prevent redrawing
+	for(unsigned int id_i=0; id_i<ids.size(); id_i++) {
+		draw_sc(ids[id_i]);
+	}
+	scale_chart_sc();
+}
+
+void __fastcall TMainGUI::btn_sc_unchk_all_Click(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		CheckListBox_sc->CheckAll(cbUnchecked,false,false);
+		Chart_sc->FreeAllSeries(0);
+		output_label->Caption = " All SCs deleted ";
+	}
+}
+
+void __fastcall TMainGUI::btn_sc_chg_color_Click(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		int index = CheckListBox_sc->ItemIndex;
+		if(index >= 0 && CheckListBox_sc->Checked[index])
+		{
+			sngl_cmd_vec[index].color = optimal_rand_color();
+			redraw_sc(index);
+			output_label->Caption = "Color changed ";
+		}
+	}
+}
+
+void __fastcall TMainGUI::btn_sc_add_rnd_Click(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		vector<int> unchecked;
+		for(int i=0; i<CheckListBox_sc->Items->Count; i++) // get all unchecked
+		{
+			if(CheckListBox_sc->Checked[i] == false
+				&& sngl_cmd_vec[i].state != Single_command::State::null)
+			{ unchecked.push_back(i);}
+		}
+
+		if(unchecked.size() == 0) // нет неотмеченых
+		{
+			output_label->Caption = " All SCs already added ";
+			return;
+		}
+		else
+		{
+		  int random = rand() % unchecked.size();
+		  CheckListBox_sc->Checked[unchecked[random]] = true;
+		  add_sc(unchecked[random]);
+		  CheckListBox_sc->ItemIndex = unchecked[random];
+		  output_label->Caption = " SC added ";
+		}
+	}
+}
+
+UnicodeString sc_min_max_to_str(unsigned int index) {
+	return "SC min = " + IntToStr(int(sngl_cmd_vec[index].min))
+		+ "; max = " + IntToStr(int(sngl_cmd_vec[index].max));
+}
+
+void __fastcall TMainGUI::CheckListBox_sc_ClickCheck(TObject *Sender) {
+	if( data_loaded() )
+	{
+		int index = CheckListBox_sc->ItemIndex;
+
+		if( CheckListBox_sc->Checked[index] )
+		{
+			add_sc(index);
+			output_label->Caption = sc_min_max_to_str(index);
+		}
+		else
+		{
+			delete_sc(index);
+			output_label->Caption = " SC deleted ";
+		}
+	}
+	checkList_sc_changed = true;
+}
+
+void __fastcall TMainGUI::CheckListBox_sc_Click(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		// because this method will be called not only after simple click
+		// but also after check action
+		if(!checkList_sc_changed) {
+			int index = CheckListBox_sc->ItemIndex;
+			if(sngl_cmd_vec[index].state == Single_command::State::null) {
+				output_label->Caption = sc_min_max_to_str(index);
+			} else {
+	   			output_label->Caption = "";
+			}
+		}
+		else
+		{checkList_sc_changed = false;}
+	}
+}
+
+void __fastcall TMainGUI::Splitter_graph_scMoved(TObject *Sender)
+{
+	checkListChannel->Width = CheckListBox_sc->Width;
+}
+
+void __fastcall TMainGUI::btn_sc_zoom_in_Click(TObject *Sender)
+{
+	if( data_loaded() && check_chart_series(Chart_sc, " SC not added! ")) {
+
+		Chart_sc->ZoomPercent(110);
+	}
+}
+
+void __fastcall TMainGUI::btn_sc_zoom_out_Click(TObject *Sender)
+{
+	if(data_loaded() && check_chart_series(Chart_sc, " SC not added! ")) {
+		Chart_sc->ZoomPercent(90);
+    }
+}
+
+void __fastcall TMainGUI::btn_sc_zoom_reset_Click(TObject *Sender)
+{
+	if(data_loaded() && check_chart_series(Chart_sc, " SC not added! ")) {
+		scale_chart_sc();
+    }
+}
+
+void TMainGUI::scale_chart_sc() {
+	if(data_loaded())
+	{
+		 try {
+			// AxisException if max<min (so is important to set both at same time)
+			Chart_sc->LeftAxis->SetMinMax(Chart_sc->MinYValue(Chart_sc->LeftAxis)
+				- sc_offset, Chart_sc->MaxYValue(Chart_sc->LeftAxis) + sc_offset);
+			Chart_sc->BottomAxis->SetMinMax(
+				min(Chart_sc->MinXValue(Chart_sc->BottomAxis), 0.0),
+				max(Chart_sc->MaxXValue(Chart_sc->BottomAxis), double(dl_fk)));
+		} catch(AxisException& ae) {
+			show_error("AxisException: "+ae.Message);
+		}
+	}
+}
+
+//------------------------------------------
+
+
+// -------------- AP chart-----------------------------
+void TMainGUI::delete_ap_series(const int index)
+{
+	UnicodeString id = anlg_param_vec[index].id.c_str();
+	for( int i = 0; i < Chart_ap->SeriesCount(); i++ )
+	{
+		if( !CompareStr(Chart_ap->Series[i]->Name, id) )
+		{
+			Chart_ap->Series[i]->Free();
+			break;
+		}
+	}
+
+	if( ! btn_multiple_axis->Tag) {
+		scale_chart_ap();
+	}
+}
+
+// use it to add series
+void TMainGUI::add_ap_series(const int index)
+{
+	checkListChannel->Checked[index] = true;
+
+	if(btn_multiple_axis->Tag) {
+		draw_ap_series(index);
+		zoom_reset_btnClick(0); // multiple axis - to scale series correct
+	} else {
+		if(auto_scale_all_btn->Tag) {
+			auto_scale_all();
+			redraw_ap_series();
+		} else {
+			draw_ap_series(index);
+		}
+		scale_chart_ap();
+	}
+}
+
+// don't use it directly
+void TMainGUI::draw_ap_series(const int index)
+{
+	TChartSeries *newSeries = new TLineSeries(Chart_ap);
+	newSeries->Name = UnicodeString(anlg_param_vec[index].id.c_str());
+	newSeries->Title = normalize_series_title(UnicodeString(
+						anlg_param_vec[index].id.c_str()));
+
+	for (unsigned int frame=0; frame<anlg_param_vec[index].values.size(); frame++)
+	{
+		double y = anlg_param_vec[index].values[frame]
+			* anlg_param_vec[index].scale
+			+ anlg_param_vec[index].offset;
+		newSeries->AddXY(frame,y);
+	}
+
+	newSeries->Color = anlg_param_vec[index].color;
+
+	//-------- Multiple axis ------
+	if(btn_multiple_axis->Tag) {
+		TChartAxis *axis = new TChartAxis(Chart_ap);
+		axis->PositionPercent = Chart_ap->SeriesCount() * axis_offset;
+		/* // if redraw each time, use this:
+		axis->PositionPercent = Chart_ap->SeriesCount() / 2 * axis_offset ;
+		axis->OtherSide = Chart_ap->SeriesCount() % 2;
+		*/
+		axis->Axis->Color = anlg_param_vec[index].color;
+		axis->Grid->Color = anlg_param_vec[index].color;
+		axis->Grid->Visible = true;
+		axis->Grid->DrawEvery = Chart_ap->SeriesCount() + 1;
+		axis->Grid->SmallDots = true;
+		newSeries->CustomVertAxis = axis;
+    }
+	//-----------------------------
+
+	Chart_ap->AddSeries(newSeries);
+}
+
+void TMainGUI::redraw_ap_series()
+{
+   for(int i=0; i<checkListChannel->Items->Count; i++)
+   {
+	  if(checkListChannel->Checked[i])
+	  {
+		delete_ap_series(i);
+		draw_ap_series(i);
+	  }
+   }
+}
+
+void TMainGUI::auto_scale_all()
+{
+	vector<int> checked_series; // индексы элементов вектора параметров,
+								// которые отмечены
+	for (int i=0; i<checkListChannel->Items->Count; i++) // поиск всех отмеченых
+	{
+		if(checkListChannel->Checked[i])
+		{ checked_series.push_back(i); }
+	}
+
+	if (checked_series.size() == 0) // нет отмеченых
+	{
+		output_label->Caption = " No APs to scale ";
+		return;
+	}
+	else
+	{
+		double max_range = anlg_param_vec[checked_series[0]].max_val
+		- anlg_param_vec[checked_series[0]].min_val;
+
+		// просмотр всех отмеченых и поиск max_range
+		for (unsigned int i=0; i<checked_series.size(); i++)
+		{
+			double cur_max = anlg_param_vec[checked_series[i]].max_val;
+			double cur_min = anlg_param_vec[checked_series[i]].min_val;
+			double cur_range = cur_max - cur_min;
+
+			if( cur_range > max_range )
+			{ max_range = cur_range;}
+		}
+
+        double average_sum = 0;
+
+		// вычисление и установка коеффициента масштаба для каждого параметра,
+		// вычисление суммы средних значений отмасштабированных параметров
+		for (unsigned int i=0; i<checked_series.size(); i++)
+		{
+			double cur_max = anlg_param_vec[checked_series[i]].max_val;
+			double cur_min = anlg_param_vec[checked_series[i]].min_val;
+			double cur_range = cur_max - cur_min;
+
+			anlg_param_vec[checked_series[i]].scale =
+			( cur_range == 0 ? 1 : (max_range / cur_range) ); // не делить на ноль
+
+            double cur_scale = anlg_param_vec[checked_series[i]].scale;
+//			average_sum+= (cur_max + cur_min)*cur_scale /2;
+			average_sum+= (cur_max + cur_min) /2;
+		}
+
+		// общее среднее для всех параметров
+		double average = average_sum / checked_series.size(); // деление на ноль исключено
+
+		// вычисление и установка смещения для каждого параметра
+		for (unsigned int i=0; i<checked_series.size(); i++)
+		{
+			double cur_max = anlg_param_vec[checked_series[i]].max_val;
+			double cur_min = anlg_param_vec[checked_series[i]].min_val;
+			double cur_scale = anlg_param_vec[checked_series[i]].scale;
+			double cur_average = (cur_max + cur_min)*cur_scale /2;
+
+			anlg_param_vec[checked_series[i]].offset = average - cur_average;
+		}
+
+	} // end of else
+}
+
+void __fastcall TMainGUI::scale_editKeyPress(TObject *Sender, System::WideChar &Key)
+{
+	if(Key=='.')
+	{ Key = ','; }
+	else if( !(isdigit(Key) || Key==',' || Key==vkBack || Key=='-'))
+	{
+		Key=0;
+		MessageBeep(-1);
+	}
+}
+
+// for future needs
+void __fastcall TMainGUI::offset_editKeyPress(TObject *Sender, System::WideChar &Key)
+{
+	scale_editKeyPress(Sender, Key);
+}
+
+void TMainGUI::auto_scale_set_off()
+{
+	auto_scale_all_btn->Kind = bkCancel;
+	auto_scale_all_btn->Caption = "Auto Scale OFF";
+	auto_scale_all_btn->Tag = 0;
+}
+
+void TMainGUI::auto_scale_set_on()
+{
+	auto_scale_all_btn->Kind = bkOK;
+	auto_scale_all_btn->Caption = "Auto Scale ON";
+	auto_scale_all_btn->Tag = 1;
+
+	auto_scale_all();
+	redraw_ap_series();
+}
+
+void __fastcall TMainGUI::auto_scale_all_btnClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		if(auto_scale_all_btn->Tag)
+		{
+			auto_scale_set_off();
+			ChannelBox_apChange(0); // не выносить как общий вниз, важен порядок вызова
+			output_label->Caption = " To reset APs press \"Reset all\" key";
+		}
+		else
+		{
+			auto_scale_set_on();
+			ChannelBox_apChange(0);
+			output_label->Caption = "";
+		}
+	}
+}
+
+void __fastcall TMainGUI::scale_btnClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		auto_scale_set_off();
+		int index = ChannelBox_ap->ItemIndex;
+		try
+		{
+			double new_scale = StrToFloat(scale_edit->Text);
+			double new_offset = StrToFloat(offset_edit->Text);
+			anlg_param_vec[index].scale = new_scale;
+			anlg_param_vec[index].offset = new_offset;
+			output_label->Caption = " AP scaled ";
+		}
+		catch (EConvertError&)
+		{
+			scale_edit->Text = FloatToStr(anlg_param_vec[index].scale);
+			offset_edit->Text = FloatToStr(anlg_param_vec[index].offset);
+			output_label->Caption = " Incorrect input ";
+		}
+
+		if(checkListChannel->Checked[index])
+		{ delete_ap_series(index); }
+
+		add_ap_series(index);
+		checkListChannel->Checked[index] = true;
+		checkListChannel->ItemIndex = index;
+	}
+
+}
+
+void __fastcall TMainGUI::Reset_btnClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		auto_scale_set_off();
+		int index = ChannelBox_ap->ItemIndex;
+
+		anlg_param_vec[index].scale = 1;
+		anlg_param_vec[index].offset = 0;
+
+		scale_edit->Text = "1";
+		offset_edit->Text = "0";
+
+		output_label->Caption = " AP reseted ";
+
+		if(checkListChannel->Checked[index])
+		{
+			delete_ap_series(index);
+			add_ap_series(index);
+		}
+	}
+}
+
+void __fastcall TMainGUI::reset_all_btnClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		auto_scale_set_off();
+		for(unsigned int i=0; i<anlg_param_vec.size(); i++)
+		{
+			anlg_param_vec[i].scale = 1;
+			anlg_param_vec[i].offset = 0;
+
+			if(checkListChannel->Checked[i])
+			{
+			  delete_ap_series(i);
+			  add_ap_series(i);
+			}
+		}
+
+		scale_edit->Text = "1";
+		offset_edit->Text = "0";
+
+		output_label->Caption = " All APs reseted ";
+	}
+}
+
+void __fastcall TMainGUI::uncheck_all_channelsClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		checkListChannel->CheckAll(cbUnchecked,false,false);
+		while(Chart_ap->SeriesCount())
+		{ Chart_ap->Series[0]->Free();}
+		output_label->Caption = " All APs deleted ";
+	}
+}
+
+void __fastcall TMainGUI::add_random_channelClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		vector<int> unchecked;
+		for(int i=0; i<checkListChannel->Items->Count; i++) // get all unchecked
+		{
+			if(checkListChannel->Checked[i] == false)
+			{ unchecked.push_back(i);}
+		}
+
+		if(unchecked.size() == 0) // нет неотмеченых
+		{
+			output_label->Caption = " All APs already added ";
+			return;
+		}
+		else
+		{
+		  int random = rand() % unchecked.size();
+		  checkListChannel->Checked[unchecked[random]] = true;
+		  add_ap_series(unchecked[random]);
+		  change_check_list_channel_item(unchecked[random]);
+		  checkListChannel->ItemIndex = unchecked[random];
+		  output_label->Caption = " AP added ";
+		}
+	}
+}
+
+void __fastcall TMainGUI::btn_add_cur_click(TObject *Sender) {
+	if(data_loaded()) {
+		if(! checkListChannel->Checked[ChannelBox_ap->ItemIndex]) {
+			checkListChannel->Checked[ChannelBox_ap->ItemIndex] = true;
+			add_ap_series(ChannelBox_ap->ItemIndex);
+			change_check_list_channel_item(ChannelBox_ap->ItemIndex);
+			output_label->Caption = " AP added ";
+		} else {
+			output_label->Caption = " AP already added ";
+        }
+	}
+}
+
+void __fastcall TMainGUI::checkListChannelClickCheck(TObject *Sender) {
+	if( data_loaded() )
+	{
+		int index = checkListChannel->ItemIndex;
+
+		if( checkListChannel->Checked[index] )
+		{
+			add_ap_series(index);
+			output_label->Caption = " AP added ";
+		}
+		else
+		{
+			delete_ap_series(index);
+			output_label->Caption = " AP deleted ";
+		}
+	}
+	checkList_ap_changed = true;
+}
+
+void __fastcall TMainGUI::checkListChannelClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		change_check_list_channel_item(checkListChannel->ItemIndex);
+		// because this method will be called not only after simple click
+		// but also after check action
+		if(!checkList_ap_changed)
+		{output_label->Caption = ""; }
+		else
+		{checkList_ap_changed = false;}
+	}
+}
+
+void TMainGUI::change_check_list_channel_item(const int index)
+{
+	if(data_loaded())
+	{
+		ChannelBox_ap->ItemIndex = index;
+		scale_edit->Text = FloatToStrF(anlg_param_vec[index].scale,
+			ffFixed, 6, 4);
+		offset_edit->Text = FloatToStrF(anlg_param_vec[index].offset,
+			ffFixed, 6, 4);
+	}
+}
+
+void __fastcall TMainGUI::ChannelBox_apChange(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		change_check_list_channel_item(ChannelBox_ap->ItemIndex);
+		checkListChannel->ItemIndex = ChannelBox_ap->ItemIndex;
+		output_label->Caption = "";
+	}
+}
+
+void __fastcall TMainGUI::Splitter_graph_apMoved(TObject *Sender)
+{
+	CheckListBox_sc->Width = checkListChannel->Width;
+}
+
+void TMainGUI::enable_scale_offset(bool enable) {
+	scale_edit->Enabled = enable;
+	offset_edit->Enabled = enable;
+	scale_btn->Enabled = enable;
+	Reset_btn->Enabled = enable;
+	reset_all_btn->Enabled = enable;
+	auto_scale_all_btn->Enabled = enable;
+}
+
+void TMainGUI::multiple_axis_set_off()
+{
+	btn_multiple_axis->Kind = bkOK;
+	btn_multiple_axis->Caption = "Multiple Axis OFF";
+	btn_multiple_axis->Tag = 0;
+	enable_scale_offset(true);
+	auto_scale_set_on();
+}
+
+void TMainGUI::multiple_axis_set_on()
+{
+	btn_multiple_axis->Kind = bkAll;
+	btn_multiple_axis->Caption = "Multiple Axis ON";
+	btn_multiple_axis->Tag = 1;
+	enable_scale_offset(false);
+	//auto_scale_set_off(); // unnecessary, reset all will turn off
+	reset_all_btnClick(0); // because even if multiple axis, draw AP uses scale and offset..
+}
+
+void __fastcall TMainGUI::btn_multiple_axisClick(TObject *Sender)
+{
+	if(data_loaded()) {
+		if(btn_multiple_axis->Tag) {
+			multiple_axis_set_off();
+		} else {
+			multiple_axis_set_on();
+		}
+		output_label->Caption = ""; // clear
+	}
+}
+
+void __fastcall TMainGUI::change_color_btnClick(TObject *Sender)
+{
+	if(data_loaded())
+	{
+		int index = checkListChannel->ItemIndex;
+		if(index >= 0 && checkListChannel->Checked[index])
+		{
+			anlg_param_vec[index].color = optimal_rand_color();
+			delete_ap_series(index);
+			draw_ap_series(index);
+			output_label->Caption = "Color changed ";
+		}
+	}
+}
+
+void __fastcall TMainGUI::zoom_in_btnClick(TObject *Sender)
+{
+	if(data_loaded() && check_chart_series(Chart_ap, " AP not added! "))
+	{
+		if(btn_multiple_axis->Tag) {
+			zoom_chart_ap(10);
+		} else {
+			Chart_ap->ZoomPercent(110); // for single axis
+		}
+	}
+}
+
+void __fastcall TMainGUI::zoom_out_btnClick(TObject *Sender)
+{
+	if(data_loaded() && check_chart_series(Chart_ap, " AP not added! "))
+	{
+		if(btn_multiple_axis->Tag) {
+			zoom_chart_ap(-10);
+		} else {
+         	Chart_ap->ZoomPercent(90);   // for single axis
+		}
+	}
+}
+
+void __fastcall TMainGUI::zoom_reset_btnClick(TObject *Sender)
+{
+	if(data_loaded() && check_chart_series(Chart_ap, " AP not added! "))
+	{
+		if(btn_multiple_axis->Tag) {
+			Chart_ap->UndoZoom();   // try without
+	//		Chart_ap->DrawZoomRectangle();
+	//		Chart_ap->Invalidate();
+	//		Chart_ap->Print();
+			//Chart_ap->Realign();
+			//Chart_ap->Show();
+			//Chart_ap->Update();
+			//Chart_ap->UpdateControlState();
+			//Chart_ap->Zoomed;
+			//Chart_ap->Zoom->
+			//Chart_ap->Repaint();
+			Chart_ap->Refresh(); // otherwise undo will not be applied
+			// scale_chart_ap() org, or rewrite.. or use instead of undoZoom..
+			// search TChart apply zoom without redrawing
+			zoom_chart_ap_y(-10);
+		} else {
+			//Chart_ap->UndoZoom(); is needed?
+			scale_chart_ap(); // for single axis
+		}
+	}
+}
+
+void TMainGUI::zoom_chart_ap(int percent) // for multiple axis
+{
+	zoom_chart_ap_y(percent);
+	scale_chart_axis(Chart_ap->BottomAxis, percent);
+}
+
+void TMainGUI::zoom_chart_ap_y(int percent) // for multiple axis
+{
+	for(int s_i = 0; s_i < Chart_ap->SeriesCount(); s_i++) {
+		scale_chart_axis(Chart_ap->Series[s_i]->GetVertAxis, percent);
+	}
+}
+
+void __fastcall TMainGUI::Chart_apZoom(TObject *Sender) // for multiple axis
+{
+	for(int s_i = 0; s_i < Chart_ap->SeriesCount(); s_i++) {
+		TChartAxis* axis = Chart_ap->Series[s_i]->GetVertAxis;
+		axis->SetMinMax(axis->CalcPosPoint(Chart_ap->Zoom->Y1),
+			axis->CalcPosPoint(Chart_ap->Zoom->Y0));
+	}
+}
+
+void __fastcall TMainGUI::Chart_apUndoZoom(TObject *Sender) // for multiple axis
+{
+	for(int s_i = 0; s_i < Chart_ap->SeriesCount(); s_i++) {
+		Chart_ap->Series[s_i]->GetVertAxis->Automatic = true;
+	}
+	Chart_ap->BottomAxis->Automatic = true;
+}
+
+void TMainGUI::scale_chart_ap() { // rewrite
+/*
+	double y_max = Chart_ap->MaxYValue(Chart_ap->LeftAxis);
+	double y_min = Chart_ap->MinYValue(Chart_ap->LeftAxis);
+	double y_offset = (y_max - y_min) / 10;
+	if(y_offset == 0) {
+		y_offset = 1;
+	} else if(y_offset < 0) {
+		show_error("Can't scale chart AP: y_offset < 0 !" + FloatToStr(y_offset));
+		y_offset = -y_offset;
+	}
+	try {
+		// AxisException if max<min (so is important to set both at same time)
+		Chart_ap->LeftAxis->SetMinMax(y_min - y_offset, y_max + y_offset);
+	} catch(AxisException& ae) {
+		show_error("AxisException: "+ae.Message);
+	}
+*/
+}
+
+void TMainGUI::scale_chart_axis(TChartAxis* axis, int percent) {
+	// maybe Axis.MasterAxis is better way to do this
+	double max = axis->Maximum;
+	double min = axis->Minimum;
+	// or chart rect if bad
+
+	double offset = (max - min) * percent / 100.0;
+	if(offset == 0) { // because required max != min
+		offset = 1;
+	}
+	try {
+		// AxisException if max<min (so is important to set both at same time)
+		axis->SetMinMax(min + offset, max - offset);
+	} catch(AxisException& ae) {
+		show_error("AxisException: "+ae.Message);
+	}
+}
+
+//---------------------------------------------------------------------------
+
+
