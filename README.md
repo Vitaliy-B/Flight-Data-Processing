@@ -2,7 +2,7 @@
 Flight data processing application for Windows build with C++ and RAD Studio, with Graphical User Interface.
 The project was started at the university under the guidance of senior lecturer. Program visualizes analog flight parameters and builds plots. Incoming data are binary files with the parameters read from the flight recorder.
 
-*version 1.2*
+[*version 1.2* - download](https://github.com/Vitaliy-B/Flight-Data-Processing/releases)
 
 **Authors:**
 
